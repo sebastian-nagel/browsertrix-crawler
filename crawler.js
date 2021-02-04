@@ -5,6 +5,7 @@ const fetch = require("node-fetch");
 const AbortController = require("abort-controller");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const Sitemapper = require("sitemapper");
 const { v4: uuidv4 } = require("uuid");
 
@@ -40,6 +41,8 @@ class Crawler {
 
     this.userAgent = "";
     this.headers = {};
+
+    this.profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "profile-"));
 
     const params = require("yargs")
       .usage("browsertrix-crawler [options]")
@@ -337,6 +340,10 @@ class Crawler {
       argv.statsFilename = path.resolve(argv.cwd, argv.statsFilename);
     }
 
+    if (argv.profile) {
+      child_process.execSync("tar xvfz " + argv.profile, {cwd: this.profileDir});
+    }
+
     return true;
   }
 
@@ -358,7 +365,8 @@ class Crawler {
       headless: this.params.headless,
       executablePath: CHROME_PATH,
       ignoreHTTPSErrors: true,
-      args: this.chromeArgs
+      args: this.chromeArgs,
+      userDataDir: this.profileDir
     };
   }
 
@@ -396,6 +404,14 @@ class Crawler {
 
     this.cluster.task(async (opts) => {
       try {
+        const { page } = opts;
+
+        if (this.params.profile) {
+          //TODO: currently needed for logged in twitter capture, as the SW cache breaks proper capture
+          // perhaps possible to avoid by clearing (but not disabling) the CacheStorage (but not any other caches?)
+          await page._client.send('Network.setBypassServiceWorker', {bypass: true});
+        }
+
         await this.driver({...opts, crawler: this});
         const title = await opts.page.title();
         this.writePage(opts.data.url, title);
