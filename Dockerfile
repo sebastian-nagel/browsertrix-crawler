@@ -24,7 +24,7 @@ COPY --from=chrome /app/libpepflashplayer.so /app/libpepflashplayer.so
 RUN dpkg -i /deb/*.deb; apt-get update; apt-get install -fqqy && \
     rm -rf /var/lib/opts/lists/*
 
-RUN pip install pywb>=2.5.0 uwsgi wacz
+RUN pip install 'pywb>=2.5.0' uwsgi wacz
 
 WORKDIR /app
 
