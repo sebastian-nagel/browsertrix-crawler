@@ -38,8 +38,6 @@ const HTTP_AGENT = require("http").Agent();
 // ============================================================================
 class Crawler {
   constructor() {
-    this.headers = {};
-
     this.seenList = new Set();
 
     this.emulateDevice = null;
@@ -460,7 +458,7 @@ class Crawler {
       ignoreHTTPSErrors: true,
       args: this.chromeArgs,
       userDataDir: this.profileDir,
-      defaultViewport: null,
+      defaultViewport: {width: 1024, height: 768},
     };
   }
 
