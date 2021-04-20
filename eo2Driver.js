@@ -17,31 +17,35 @@ module.exports = async ({data, page, crawler}) => {
     crawler.params.statsFilename = path.join(crawler.collDir, "stats.json");
   }
 
-  // whether this is a seed (note: works only for single-seed crawls)
-  let isSeed = crawler.seenList.size <= 1;
-
-  // base sleep time, multiplied by random number [.5, 1.5]
-  const sleepTime = 60;
-  if (!isSeed) {
-    let s = Math.floor(1000 * (sleepTime / 2 + Math.random() * sleepTime));
-    console.log(`Random sleep for ${s} sec.`);
-    await crawler.sleep(s);
-  }
-
   const captureList = path.join(crawler.collDir, "captures.jsonl");
-  async function writeCapture({url, isSeed, isHTML}) {
-    let timestamp = new Date().toISOString();
+  async function writeCapture({url, timestamp, isSeed, isHTML}) {
     //let row = {"url": url, "timestamp": timestamp, "isSeed": isSeed, "isHTML": isHTML}
     let row = {url, timestamp, isSeed, isHTML};
     let line = JSON.stringify(row).concat("\n");
     fs.appendFileSync(captureList, line);
   }
 
+  // whether this is a seed (note: works only for single-seed crawls)
+  let isSeed = crawler.seenList.size <= 1;
+
   if (!await crawler.isHTML(url)) {
-    // TODO: eventually skip over all non-HTML content (videos, etc.)
-    console.log(`Fetching non-HTML content ${url}`);
-    await crawler.directFetchCapture(url);
+    // for now skip over all non-HTML content (PDFs, videos, etc.)
+    console.log(`Skip fetching non-HTML content ${url}`);
+    // TODO: fetching would be:
+    //       await crawler.directFetchCapture(url);
+    // to avoid that we're inspecting non-HTML content again, mark it as visited
+    await writeCapture({url, timestamp: null, isSeed, isHTML: false});
     return;
+  }
+
+  /* Sleep before fetching any further page (after the seed URL)
+   * Note: timeout must include the max. sleep time */
+  // base sleep time, multiplied by random number [.5, 1.5]
+  const sleepTime = 60;
+  if (!isSeed) {
+    let s = Math.floor(1000 * (sleepTime / 2 + Math.random() * sleepTime));
+    console.log(`Random sleep for ${s} ms, before capturing ${url}`);
+    await crawler.sleep(s);
   }
 
   const gotoOpts = {
@@ -52,7 +56,8 @@ module.exports = async ({data, page, crawler}) => {
   console.log(`Fetching HTML page ${url}`);
   try {
     await page.goto(url, gotoOpts);
-    await writeCapture({url, isSeed, isHTML: true});
+    let timestamp = new Date().toISOString();
+    await writeCapture({url, timestamp, isSeed, isHTML: true});
   } catch (e) {
     console.log(`Load timeout for ${url}`, e);
   }
@@ -92,7 +97,7 @@ module.exports = async ({data, page, crawler}) => {
     record = await takeScreenshot({url, date: warcDate, fullPage: true});
     recordBuf = await warcio.WARCSerializer.serialize(record, {gzip: true});
     if (digest === record.warcPayloadDigest) {
-      console.log("Skipping full page screenshot (identical to simple screenshot)");
+      console.log(`Skipping full page screenshot for ${url} (identical to simple screenshot)`);
     } else {
       fs.appendFileSync(screenshotWarcFile, recordBuf);
       console.log(`Full page screenshot for ${url} written to ${screenshotWarcFile}`);
@@ -107,9 +112,14 @@ module.exports = async ({data, page, crawler}) => {
     return;
   }
 
-  // TODO: fill seenList to avoid second visits of first-order links
-  //       (only re-crawl the homepage)
-
+  // fill seenList to avoid second visits of first-order links
+  // (only re-crawl the homepage, already done)
+  const seenList = path.join(crawler.collDir, "urls-seen.json");
+  if (fs.existsSync(seenList)) {
+    let seen = await JSON.parse(fs.readFileSync(seenList, "utf-8"));
+    await seen.forEach(item => crawler.seenList.add(item));
+    console.log(`Added ${seen.length} previously fetched URLs to seenList (now: ${crawler.seenList.size} items)`);
+  }
 
   /**
     Modified version of @{link Crawler#extractLinks}:
@@ -134,12 +144,23 @@ module.exports = async ({data, page, crawler}) => {
         return [...document.querySelectorAll(selector)].map(elem => elem.href);
       }, selector);
     } catch (e) {
-      console.warn("Link Extraction failed", e);
+      console.warn( `Link Extraction failed for ${url}`, e);
       return;
     }
     results = Array.from(results);
-    console.info("Extracted " + results.length + " links");
+
+    let resultsUniq = new Set(results);
+    console.info(`Extracted ${results.length} links (${resultsUniq.size} unique) from ${url}`);
+    if (results.length > resultsUniq.size) {
+      results = Array.from(resultsUniq);
+    }
+
     shuffle(results);
+
+    // dump link list for debugging
+    const linkList = path.join(crawler.collDir, "links.json");
+    fs.appendFileSync(linkList, JSON.stringify(results).concat("\n"));
+
     crawler.queueUrls(results);
   }
 
