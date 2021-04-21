@@ -35,6 +35,7 @@ module.exports = async ({data, page, crawler}) => {
     //       await crawler.directFetchCapture(url);
     // to avoid that we're inspecting non-HTML content again, mark it as visited
     await writeCapture({url, timestamp: null, isSeed, isHTML: false});
+    await crawler.sleep(5000); // minimal sleep as chromium might even load PDFs, etc.
     return;
   }
 
@@ -92,15 +93,20 @@ module.exports = async ({data, page, crawler}) => {
     let recordBuf = await warcio.WARCSerializer.serialize(record, {gzip: true});
     fs.appendFileSync(screenshotWarcFile, recordBuf);
     let digest = record.warcPayloadDigest;
-    console.log(`Screenshot for ${url} written to ${screenshotWarcFile}`);
+    console.log(`Screenshot for ${url} written to ${screenshotWarcFile} (${recordBuf.length} bytes)`);
     // full page screenshot
     record = await takeScreenshot({url, date: warcDate, fullPage: true});
     recordBuf = await warcio.WARCSerializer.serialize(record, {gzip: true});
-    if (digest === record.warcPayloadDigest) {
-      console.log(`Skipping full page screenshot for ${url} (identical to simple screenshot)`);
+    const maxScreenshotSizeMB = 8;
+    if (recordBuf.length > (maxScreenshotSizeMB * 2**20)) {
+      console.log(`Skipping full page screenshot for ${url} (overlong, exceeding ${maxScreenshotSizeMB} MiB)`);
     } else {
-      fs.appendFileSync(screenshotWarcFile, recordBuf);
-      console.log(`Full page screenshot for ${url} written to ${screenshotWarcFile}`);
+      if (digest === record.warcPayloadDigest) {
+        console.log(`Skipping full page screenshot for ${url} (identical to simple screenshot)`);
+      } else {
+        fs.appendFileSync(screenshotWarcFile, recordBuf);
+        console.log(`Full page screenshot for ${url} written to ${screenshotWarcFile} (${recordBuf.length} bytes)`);
+      }
     }
   } catch (e) {
     console.log(`Screenshots failed for ${url}`, e);
