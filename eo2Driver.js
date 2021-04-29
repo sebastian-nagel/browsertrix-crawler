@@ -135,7 +135,7 @@ module.exports = async ({data, page, crawler}) => {
     URLs change frequently.
   */
   async function extractLinks(page, selector = "a[href]") {
-    let results = null;
+    let results = [];
 
     function shuffle(array) {
       for (let i = array.length - 1; i > 0; i--) {
@@ -145,10 +145,11 @@ module.exports = async ({data, page, crawler}) => {
     }
 
     try {
-      results = await page.evaluate((selector) => {
+      await Promise.allSettled(page.frames().map(frame => frame.evaluate((selector) => {
         /* eslint-disable-next-line no-undef */
         return [...document.querySelectorAll(selector)].map(elem => elem.href);
-      }, selector);
+      }, selector))).then((linkResults) => {
+        linkResults.forEach((linkResult) => {linkResult.value.forEach(link => results.push(link));});});
     } catch (e) {
       console.warn( `Link Extraction failed for ${url}`, e);
       return;
