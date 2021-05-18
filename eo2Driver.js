@@ -11,6 +11,7 @@ const fetch = require("node-fetch");
 const warcio = require("warcio");
 const HTML_TYPES = ["text/html", "application/xhtml", "application/xhtml+xml"];
 const GOOD_MIME_TYPES = ["application/pdf"];
+const FEED_MIME_TYPES = ["application/rss+xml", "application/atom+xml"];
 
 module.exports = async ({data, page, crawler}) => {
   const {url} = data;
@@ -21,9 +22,12 @@ module.exports = async ({data, page, crawler}) => {
   }
 
   const captureList = path.join(crawler.collDir, "captures.jsonl");
-  async function writeCapture({url, timestamp, isSeed, isHTML}) {
+  async function writeCapture({url, timestamp, isSeed, isHTML, mime=null}) {
     //let row = {"url": url, "timestamp": timestamp, "isSeed": isSeed, "isHTML": isHTML}
     let row = {url, timestamp, isSeed, isHTML};
+    if (mime) {
+      row['mime'] = mime;
+    }
     let line = JSON.stringify(row).concat("\n");
     fs.appendFileSync(captureList, line);
   }
@@ -59,19 +63,23 @@ module.exports = async ({data, page, crawler}) => {
   }
 
   const mime = await getMimeType(url);
-  if (!HTML_TYPES.includes(mime)) {
+  if (mime && !HTML_TYPES.includes(mime)) {
     // for now skip over all non-HTML content (videos, etc.)
     // except for PDFs
     if (GOOD_MIME_TYPES.includes(mime)) {
       await crawler.directFetchCapture(url);
       let timestamp = new Date().toISOString();
-      await writeCapture({url, timestamp, isSeed, isHTML: false});
+      await writeCapture({url, timestamp, isSeed, isHTML: false, mime: mime});
+      await crawler.sleep(35000);
+    } else if (FEED_MIME_TYPES.includes(mime)) {
+      await crawler.directFetchCapture(url);
+      // do not write capture, so that feeds are re-fetched
     } else {
       console.log(`Skip fetching non-HTML content ${url}`);
       // to avoid that we're inspecting non-HTML content again, mark it as visited
-      await writeCapture({url, timestamp: null, isSeed, isHTML: false});
+      await writeCapture({url, timestamp: null, isSeed, isHTML: false, mime: mime});
     }
-    await crawler.sleep(5000); // minimal sleep as chromium might even load PDFs, etc.
+    await crawler.sleep(5000); // minimal sleep
     return;
   }
 
