@@ -7,7 +7,10 @@
 const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
+const fetch = require("node-fetch");
 const warcio = require("warcio");
+const HTML_TYPES = ["text/html", "application/xhtml", "application/xhtml+xml"];
+const GOOD_MIME_TYPES = ["application/pdf"];
 
 module.exports = async ({data, page, crawler}) => {
   const {url} = data;
@@ -28,13 +31,46 @@ module.exports = async ({data, page, crawler}) => {
   // whether this is a seed (note: works only for single-seed crawls)
   let isSeed = crawler.seenList.size <= 1;
 
-  if (!await crawler.isHTML(url)) {
-    // for now skip over all non-HTML content (PDFs, videos, etc.)
-    console.log(`Skip fetching non-HTML content ${url}`);
-    // TODO: fetching would be:
-    //       await crawler.directFetchCapture(url);
-    // to avoid that we're inspecting non-HTML content again, mark it as visited
-    await writeCapture({url, timestamp: null, isSeed, isHTML: false});
+  async function getMimeType(url) {
+    try {
+      const resp = await fetch(url, {
+        method: "HEAD",
+        headers: crawler.headers,
+        agent: crawler.resolveAgent
+      });
+
+      if (resp.status >= 400) {
+        console.log(`Skipping HEAD check ${url}, invalid status ${resp.status}`);
+        return null;
+      }
+
+      const contentType = resp.headers.get("Content-Type");
+
+      // just load if no content-type
+      if (!contentType) {
+        return null;
+      }
+
+      return contentType.split(";")[0];
+    } catch(e) {
+      console.log("MIME type check error", e);
+      return null;
+    }
+  }
+
+  const mime = await getMimeType(url);
+  if (!HTML_TYPES.includes(mime)) {
+    // for now skip over all non-HTML content (videos, etc.)
+    // except for PDFs
+    if (GOOD_MIME_TYPES.includes(mime)) {
+      await crawler.directFetchCapture(url);
+      let timestamp = new Date().toISOString();
+      await writeCapture({url, timestamp, isSeed, isHTML: false});
+    } else {
+      console.log(`Skip fetching non-HTML content ${url}`);
+      // to avoid that we're inspecting non-HTML content again, mark it as visited
+      await writeCapture({url, timestamp: null, isSeed, isHTML: false});
+    }
     await crawler.sleep(5000); // minimal sleep as chromium might even load PDFs, etc.
     return;
   }
